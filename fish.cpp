@@ -269,6 +269,12 @@ public:
 		CString command = sMessage.Token(0);
 		CString sOtherPub_Key = sMessage.Token(1);
 
+                // block any incoming cbc key exchange messages, to prevent conflicts with client
+                // scripts such as mircryption
+                if (command.CaseCmp("DH1080_INIT_cbc") == 0 || command.CaseCmp("DH1080_FINISH_cbc") == 0) {
+                        return HALT;
+                }
+
 		if (command.CaseCmp("DH1080_INIT") == 0 && !sOtherPub_Key.empty()) {
 		    CString sPriv_Key;
 		    CString sPub_Key;

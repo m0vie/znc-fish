@@ -4,6 +4,7 @@
 #include <znc/Modules.h>
 #include <znc/Chan.h>
 #include <znc/IRCNetwork.h>
+#include <znc/Query.h>
 
 #include <string.h>
 using std::vector;
@@ -322,27 +323,40 @@ public:
         }
 
 		if (it != EndNV()) {
-			CChan* pChan = m_pNetwork->FindChan(sTarget);
-			if ((pChan) && !(pChan->AutoClearChanBuffer())) {
-				pChan->AddBuffer(":" + m_pNetwork->GetIRCNick().GetNickMask() + " PRIVMSG " + sTarget + " :" + sMessage);
+			if (m_pNetwork->IsChan(sTarget)) {
+				CChan* pChan = m_pNetwork->FindChan(sTarget);
+
+				if ((pChan) && (!pChan->AutoClearChanBuffer() || !m_pNetwork->IsUserOnline())) {
+					pChan->AddBuffer(":" + _NAMEDFMT(m_pNetwork->GetIRCNick().GetNickMask()) + " PRIVMSG " + _NAMEDFMT(sTarget) + " :{text}", sMessage);
+				}
+			} else {
+				if (!m_pUser->AutoClearQueryBuffer() || !m_pNetwork->IsUserOnline()) {
+					CQuery* pQuery = m_pNetwork->AddQuery(sTarget);
+					if (pQuery) {
+						pQuery->AddBuffer(":" + _NAMEDFMT(sTarget) + " PRIVMSG " + _NAMEDFMT(sTarget) + " :<" + m_pNetwork->GetIRCNick().GetNick() + "> {text}", sMessage);
+					}
+				}
 			}
+
+			// Relay to the rest of the clients that may be connected to this user
+			const vector<CClient*>& vClients = this->m_pNetwork->GetClients();
+
+			for (CClient* pClient : vClients) {
+				if (pClient != this->GetClient()) {
+					if (m_pNetwork->IsChan(sTarget) || pClient->HasSelfMessage()) {
+						pClient->PutClient(":" + m_pNetwork->GetIRCNick().GetNickMask() + " PRIVMSG " + sTarget + " :" + sMessage);
+					} else {
+						pClient->PutClient(":" + sTarget + " PRIVMSG " + sTarget + " :<" + m_pNetwork->GetIRCNick().GetNick() + "> " + sMessage);
+					}
+				}
+			}
+
 			char * cMsg = encrypts((char *)it->second.c_str(), (char *)sMessage.c_str());
 
 			CString sMsg = "+OK " + CString(cMsg);
 			PutIRC("PRIVMSG " + sTarget + " :" + sMsg);
-			m_pUser->PutUser(":" + m_pNetwork->GetIRCNick().GetNickMask() + " PRIVMSG " + sTarget + " :" + sMessage, NULL, m_pClient);
 
 			free(cMsg);
-
-			// relay to other clients
-			vector<CClient*>& vClients = this->m_pNetwork->GetClients();
-			for (unsigned int a = 0; a < vClients.size(); a++) {
-				CClient* pClient = vClients[a];
-
-				if (pClient != this->GetClient()) {
-					pClient->PutClient(":" + this->GetClient()->GetNickMask() + " PRIVMSG " + sTarget + " :" + sMessage);
-				}
-			}
 
 			// stop ZNC from handling message, or else it gets sent unencrypted to target as well
 			return HALTCORE;
@@ -355,27 +369,40 @@ public:
 		MCString::iterator it = FindNV("key " + sTarget.AsLower());
 
 		if (it != EndNV()) {
-			CChan* pChan = m_pNetwork->FindChan(sTarget);
-			if ((pChan) && !(pChan->AutoClearChanBuffer())) {
-				pChan->AddBuffer(":" + m_pNetwork->GetIRCNick().GetNickMask() + " PRIVMSG " + sTarget + " :\001ACTION " + sMessage + "\001");
+			if (m_pNetwork->IsChan(sTarget)) {
+				CChan* pChan = m_pNetwork->FindChan(sTarget);
+
+				if (pChan && (!pChan->AutoClearChanBuffer() || !m_pNetwork->IsUserOnline())) {
+					pChan->AddBuffer(":" + _NAMEDFMT(m_pNetwork->GetIRCNick().GetNickMask()) + " PRIVMSG " + _NAMEDFMT(sTarget) + " :\001ACTION {text}\001", sMessage);
+				}
+			} else {
+				if (!m_pUser->AutoClearQueryBuffer() || !m_pNetwork->IsUserOnline()) {
+					CQuery* pQuery = m_pNetwork->AddQuery(sTarget);
+					if (pQuery) {
+						pQuery->AddBuffer(":" + _NAMEDFMT(sTarget) + " PRIVMSG " + _NAMEDFMT(sTarget) + " :\001ACTION <" + m_pNetwork->GetIRCNick().GetNick() + "> {text}\001", sMessage);
+					}
+				}
 			}
+
+			// Relay to the rest of the clients that may be connected to this user
+			const vector<CClient*>& vClients = this->m_pNetwork->GetClients();
+	
+			for (CClient* pClient : vClients) {
+				if (pClient != this->GetClient()) {
+					if (m_pNetwork->IsChan(sTarget) || pClient->HasSelfMessage()) {
+						pClient->PutClient(":" + m_pNetwork->GetIRCNick().GetNickMask() + " PRIVMSG " + sTarget + " :\001" + sMessage + "\001");
+					} else {
+						pClient->PutClient(":" + sTarget + " PRIVMSG " + sTarget + " :\001" + "ACTION " + "<" + m_pNetwork->GetIRCNick().GetNick() + "> " + sMessage + "\001");
+					}
+				}
+			}
+	
 			char * cMsg = encrypts((char *)it->second.c_str(), (char *)sMessage.c_str());
 
 			CString sMsg = "+OK " + CString(cMsg);
 			PutIRC("PRIVMSG " + sTarget + " :\001ACTION " + sMsg + "\001");
-			m_pUser->PutUser(":" + m_pNetwork->GetIRCNick().GetNickMask() + " PRIVMSG " + sTarget + " :\001ACTION " + sMessage + "\001", NULL, m_pClient);
 
 			free(cMsg);
-
-			// relay to other clients
-			vector<CClient*>& vClients = this->m_pNetwork->GetClients();
-			for (unsigned int a = 0; a < vClients.size(); a++) {
-				CClient* pClient = vClients[a];
-
-				if (pClient != this->GetClient()) {
-					pClient->PutClient(":" + this->GetClient()->GetNickMask() + " PRIVMSG " + sTarget + " :\001ACTION " + sMessage + "\001");
-				}
-			}
 
 			// stop ZNC from handling message, or else it gets sent unencrypted to target as well
 			return HALTCORE;
@@ -388,10 +415,34 @@ public:
 		MCString::iterator it = FindNV("key " + sTarget.AsLower());
 
 		if (it != EndNV()) {
-			CChan* pChan = m_pNetwork->FindChan(sTarget);
-			if ((pChan) && !(pChan->AutoClearChanBuffer())) {
-				pChan->AddBuffer(":" + m_pNetwork->GetIRCNick().GetNickMask() + " NOTICE " + sTarget + " :" + sMessage);
+			if (m_pNetwork->IsChan(sTarget)) {
+				CChan* pChan = m_pNetwork->FindChan(sTarget);
+
+				if ((pChan) && (!pChan->AutoClearChanBuffer())) {
+					pChan->AddBuffer(":" + _NAMEDFMT(m_pNetwork->GetIRCNick().GetNickMask()) + " NOTICE " + _NAMEDFMT(sTarget) + " :{text}", sMessage);
+				}
+			} else {
+				if (!m_pUser->AutoClearQueryBuffer() || !m_pNetwork->IsUserOnline()) {
+					CQuery* pQuery = m_pNetwork->AddQuery(sTarget);
+					if (pQuery) {
+						pQuery->AddBuffer(":" + _NAMEDFMT(sTarget) + " NOTICE " + _NAMEDFMT(sTarget) + " :<" + m_pNetwork->GetIRCNick().GetNick() + "> {text}", sMessage);
+					}
+				}
 			}
+
+			// Relay to the rest of the clients that may be connected to this user
+			const vector<CClient*>& vClients = this->m_pNetwork->GetClients();
+	
+			for (CClient* pClient : vClients) {
+				if (pClient != this->GetClient()) {
+					if (m_pNetwork->IsChan(sTarget) || pClient->HasSelfMessage()) {
+						pClient->PutClient(":" + m_pNetwork->GetIRCNick().GetNickMask() + " NOTICE " + sTarget + " :" + sMessage);
+					} else {
+						pClient->PutClient(":" + sTarget + " NOTICE " + sTarget + " :<" + m_pNetwork->GetIRCNick().GetNick() + "> " + sMessage);
+					}
+				}
+			}
+
 			char * cMsg = encrypts((char *)it->second.c_str(), (char *)sMessage.c_str());
 
 			CString sMsg = "+OK " + CString(cMsg);
@@ -399,16 +450,6 @@ public:
 			m_pUser->PutUser(":" + m_pNetwork->GetIRCNick().GetNickMask() + " NOTICE " + sTarget + " :" + sMessage, NULL, m_pClient);
 
 			free(cMsg);
-
-			// relay to other clients
-			vector<CClient*>& vClients = this->m_pNetwork->GetClients();
-			for (unsigned int a = 0; a < vClients.size(); a++) {
-				CClient* pClient = vClients[a];
-
-				if (pClient != this->GetClient()) {
-					pClient->PutClient(":" + this->GetClient()->GetNickMask() + " NOTICE " + sTarget + " :" + sMessage);
-				}
-			}
 
 			// stop ZNC from handling message, or else it gets sent unencrypted to target as well
 			return HALTCORE;
